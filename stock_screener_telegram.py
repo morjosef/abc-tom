@@ -10,6 +10,8 @@ import requests
 import pandas as pd
 import yfinance as yf
 import mplfinance as mpf
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from finviz.screener import Screener
 from datetime import date
@@ -59,6 +61,9 @@ def send_message(text: str):
 
 
 def send_photo(image_bytes: bytes, caption: str = ""):
+    # Telegram caption limit for photos is 1024 characters
+    if len(caption) > 1024:
+        caption = caption[:1021] + "..."
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
     resp = requests.post(
         url,
@@ -67,7 +72,17 @@ def send_photo(image_bytes: bytes, caption: str = ""):
         timeout=60,
     )
     if not resp.ok:
-        print(f"  ⚠️  Telegram error: {resp.text}")
+        print(f"  ⚠️  Telegram sendPhoto error {resp.status_code}: {resp.text}")
+        # Fallback: send as document so image is never lost silently
+        doc_url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendDocument"
+        resp2 = requests.post(
+            doc_url,
+            data={"chat_id": CHAT_ID, "caption": caption[:1024], "parse_mode": "HTML"},
+            files={"document": ("chart.png", image_bytes, "image/png")},
+            timeout=60,
+        )
+        if not resp2.ok:
+            print(f"  ⚠️  Telegram sendDocument fallback error {resp2.status_code}: {resp2.text}")
 
 
 # ---------- Chart helpers ----------
@@ -179,23 +194,27 @@ def build_grid(batch: list[tuple[str, bytes]]) -> bytes:
 # ---------- Caption builder ----------
 
 def build_caption(page: list[tuple[str, bytes]], rows_map: dict,
-                  idx: int, total_pages: int, total: int, shown: int, today: str) -> str:
-    """Build an HTML caption with TradingView links for each ticker in the page."""
-    ticker_links = []
+                  idx: int, total_pages: int) -> str:
+    """Build an HTML caption with TradingView links for each ticker in the page.
+    Header is sent separately to stay under Telegram's 1024-char caption limit.
+    """
+    MAX = 1024
+    page_line = f"עמוד {idx}/{total_pages}\n"
+    links: list[str] = []
+
     for ticker, _ in page:
         url = f"https://www.tradingview.com/chart/?symbol={ticker}"
         row = rows_map.get(ticker, {})
         price = row.get("Price", "—")
         rsi   = row.get("RSI", "—")
-        ticker_links.append(f'<a href="{url}">{ticker}</a> ${price} RSI:{rsi}')
+        link  = f'<a href="{url}">{ticker}</a> ${price} {rsi}'
 
-    header = ""
-    if idx == 1:
-        header = (f"📊 <b>Stock Screener — {today}</b>\n"
-                  f"✅ {total} מניות | מוצגות {shown} | 🔵SMA50 🟠SMA200\n\n")
+        candidate = page_line + " · ".join(links + [link])
+        if len(candidate) > MAX:
+            break
+        links.append(link)
 
-    page_line = f"עמוד {idx}/{total_pages}\n"
-    return header + page_line + " · ".join(ticker_links)
+    return page_line + " · ".join(links)
 
 
 # ---------- Main ----------
@@ -228,13 +247,22 @@ def main():
         if result:
             charts.append(result)
 
-    # 3. Send grid pages with linked captions
+    if not charts:
+        send_message(f"📊 <b>Stock Screener — {today}</b>\n\n⚠️ לא הצלחתי לרנדר גרפים.")
+        return
+
+    # 3. Send header message (separately — caption limit is 1024 chars)
+    send_message(
+        f"📊 <b>Stock Screener — {today}</b>\n"
+        f"✅ {total} מניות | מוצגות {len(charts)} | 🔵SMA50 🟠SMA200"
+    )
+
+    # 4. Send grid pages with linked captions
     pages = [charts[i:i + PAGE_SIZE] for i in range(0, len(charts), PAGE_SIZE)]
     for idx, page in enumerate(pages, 1):
         print(f"  📤 שולח עמוד {idx}/{len(pages)}...")
         grid_bytes = build_grid(page)
-        caption    = build_caption(page, rows_map, idx, len(pages),
-                                   total, len(tickers), today)
+        caption    = build_caption(page, rows_map, idx, len(pages))
         send_photo(grid_bytes, caption)
 
     print("✅ הושלם!")
