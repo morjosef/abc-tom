@@ -205,8 +205,8 @@ def build_caption(page: list[tuple[str, bytes]], rows_map: dict,
     for ticker, _ in page:
         url = f"https://www.tradingview.com/chart/?symbol={ticker}"
         row = rows_map.get(ticker, {})
-        price = row.get("Price", "—")
-        rsi   = row.get("RSI", "—")
+        price = row.get("Price") or row.get("price") or "—"
+        rsi   = row.get("RSI") or row.get("RSI (14)") or row.get("Relative Strength Index") or "—"
         link  = f'<a href="{url}">{ticker}</a> ${price} {rsi}'
 
         candidate = page_line + " · ".join(links + [link])
@@ -225,6 +225,15 @@ def main():
 
     # 1. Finviz screener (table=Technical for RSI + price data)
     screener     = Screener(filters=FILTERS, table="Technical", order="ticker")
+
+    # Debug: print the actual keys and first few rows from finviz
+    if hasattr(screener, 'data') and screener.data:
+        print(f"🔍 finviz row keys: {list(screener.data[0].keys())}")
+        for i, r in enumerate(screener.data[:3]):
+            print(f"   row[{i}]: {dict(r)}")
+    if hasattr(screener, 'headers'):
+        print(f"🔍 finviz headers: {screener.headers}")
+
     all_rows     = list(screener)
     total_raw    = len(all_rows)
 
@@ -232,22 +241,28 @@ def main():
     seen: set[str] = set()
     unique_rows: list = []
     for r in all_rows:
-        t = r["Ticker"]
+        t = r.get("Ticker") or r.get("ticker") or ""
         if t and t not in seen:
             seen.add(t)
             unique_rows.append(r)
 
     total        = len(unique_rows)
     rows         = unique_rows[:MAX_CHARTS]
-    tickers      = [r["Ticker"] for r in rows]
+
+    def get_ticker(r):
+        return r.get("Ticker") or r.get("ticker") or ""
+
+    tickers      = [get_ticker(r) for r in rows]
 
     print(f"✅ נמצאו {total_raw} שורות גולמיות → {total} ייחודיות | מציג {len(tickers)}")
+    if tickers:
+        print(f"   דוגמה: {tickers[:5]}")
 
     if not tickers:
         send_message(f"📊 <b>Stock Screener — {today}</b>\n\nלא נמצאו מניות לפי הפילטרים.")
         return
 
-    rows_map = {r["Ticker"]: r for r in rows}
+    rows_map = {get_ticker(r): r for r in rows}
 
     # 2. Render charts
     style = make_style()
