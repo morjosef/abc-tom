@@ -205,8 +205,9 @@ def build_caption(page: list[tuple[str, bytes]], rows_map: dict,
     for ticker, _ in page:
         url = f"https://www.tradingview.com/chart/?symbol={ticker}"
         row = rows_map.get(ticker, {})
-        price = row.get("Price") or row.get("price") or "—"
-        rsi   = row.get("RSI") or row.get("RSI (14)") or row.get("Relative Strength Index") or "—"
+        # finviz 2.0.0 column shift: "Change" holds actual price, "Price" holds actual RSI
+        price = row.get("Change") or row.get("Price") or "—"
+        rsi   = row.get("Price") or row.get("RSI") or "—"
         link  = f'<a href="{url}">{ticker}</a> ${price} {rsi}'
 
         candidate = page_line + " · ".join(links + [link])
@@ -226,33 +227,34 @@ def main():
     # 1. Finviz screener (table=Technical for RSI + price data)
     screener     = Screener(filters=FILTERS, table="Technical", order="ticker")
 
-    # Debug: print the actual keys and first few rows from finviz
-    if hasattr(screener, 'data') and screener.data:
-        print(f"🔍 finviz row keys: {list(screener.data[0].keys())}")
-        for i, r in enumerate(screener.data[:3]):
-            print(f"   row[{i}]: {dict(r)}")
-    if hasattr(screener, 'headers'):
-        print(f"🔍 finviz headers: {screener.headers}")
-
     all_rows     = list(screener)
     total_raw    = len(all_rows)
 
-    # Deduplicate — finviz sometimes returns the same ticker on multiple pages
+    # finviz 2.0.0 column-alignment bug: the HTML section-header letter (A, B, C…)
+    # occupies the "Ticker" cell, shifting real data one column to the right.
+    # Real ticker is in r["Beta"], real RSI in r["Price"], real price in r["Change"].
+    def get_real_ticker(r) -> str:
+        candidate = r.get("Beta", "")
+        # Heuristic: if Beta looks like a ticker (1-5 uppercase letters) and
+        # Ticker looks like a single section letter, use Beta. Otherwise fall back.
+        ticker_field = r.get("Ticker", "")
+        if (len(ticker_field) == 1 and ticker_field.isupper() and
+                candidate and len(candidate) <= 6 and candidate.isupper()):
+            return candidate
+        return ticker_field or candidate
+
+    # Deduplicate by real ticker
     seen: set[str] = set()
     unique_rows: list = []
     for r in all_rows:
-        t = r.get("Ticker") or r.get("ticker") or ""
+        t = get_real_ticker(r)
         if t and t not in seen:
             seen.add(t)
             unique_rows.append(r)
 
     total        = len(unique_rows)
     rows         = unique_rows[:MAX_CHARTS]
-
-    def get_ticker(r):
-        return r.get("Ticker") or r.get("ticker") or ""
-
-    tickers      = [get_ticker(r) for r in rows]
+    tickers      = [get_real_ticker(r) for r in rows]
 
     print(f"✅ נמצאו {total_raw} שורות גולמיות → {total} ייחודיות | מציג {len(tickers)}")
     if tickers:
@@ -262,7 +264,7 @@ def main():
         send_message(f"📊 <b>Stock Screener — {today}</b>\n\nלא נמצאו מניות לפי הפילטרים.")
         return
 
-    rows_map = {get_ticker(r): r for r in rows}
+    rows_map = {get_real_ticker(r): r for r in rows}
 
     # 2. Render charts
     style = make_style()
