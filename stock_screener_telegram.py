@@ -226,11 +226,22 @@ def main():
     # 1. Finviz screener (table=Technical for RSI + price data)
     screener     = Screener(filters=FILTERS, table="Technical", order="ticker")
     all_rows     = list(screener)
-    total        = len(all_rows)
-    rows         = all_rows[:MAX_CHARTS]
+    total_raw    = len(all_rows)
+
+    # Deduplicate — finviz sometimes returns the same ticker on multiple pages
+    seen: set[str] = set()
+    unique_rows: list = []
+    for r in all_rows:
+        t = r["Ticker"]
+        if t and t not in seen:
+            seen.add(t)
+            unique_rows.append(r)
+
+    total        = len(unique_rows)
+    rows         = unique_rows[:MAX_CHARTS]
     tickers      = [r["Ticker"] for r in rows]
 
-    print(f"✅ נמצאו {total} מניות | מציג {len(tickers)}")
+    print(f"✅ נמצאו {total_raw} שורות גולמיות → {total} ייחודיות | מציג {len(tickers)}")
 
     if not tickers:
         send_message(f"📊 <b>Stock Screener — {today}</b>\n\nלא נמצאו מניות לפי הפילטרים.")

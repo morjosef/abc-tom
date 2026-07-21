@@ -315,8 +315,18 @@ def main():
     # 1. Finviz universe
     screener = Screener(filters=UNIVERSE_FILTERS, table="Technical", order="ticker")
     all_rows = list(screener)
-    tickers  = [r["Ticker"] for r in all_rows[:MAX_TICKERS]]
-    print(f"✅ {len(tickers)} מניות ביקום | בודק פריצות...")
+
+    # Deduplicate — finviz sometimes returns the same ticker on multiple pages
+    seen: set[str] = set()
+    unique_rows: list = []
+    for r in all_rows:
+        t = r["Ticker"]
+        if t and t not in seen:
+            seen.add(t)
+            unique_rows.append(r)
+
+    tickers = [r["Ticker"] for r in unique_rows[:MAX_TICKERS]]
+    print(f"✅ {len(all_rows)} שורות גולמיות → {len(tickers)} ייחודיות | בודק פריצות...")
 
     if not tickers:
         send_message(f"🚀 <b>Breakout Screener — {today}</b>\n\nלא נמצאו מניות ביקום.")
