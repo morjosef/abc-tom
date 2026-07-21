@@ -45,7 +45,7 @@ FILTERS    = build_filters(SETTINGS)
 PERIOD     = "6mo"
 MAX_CHARTS = 100
 PAGE_SIZE  = 12
-COLS       = 3
+COLS       = 2
 # ==============================
 
 BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
