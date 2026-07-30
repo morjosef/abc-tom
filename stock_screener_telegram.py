@@ -7,6 +7,7 @@ import os
 import io
 import json
 import requests
+import subprocess
 import pandas as pd
 import yfinance as yf
 import mplfinance as mpf
@@ -47,6 +48,18 @@ MAX_CHARTS = 100
 PAGE_SIZE  = 12
 COLS       = 2
 # ==============================
+
+
+def commit_and_push() -> None:
+    """Persist the rotation cursor (settings.json) back to the repo."""
+    subprocess.run(["git", "config", "user.email", "bot@github.com"], check=True)
+    subprocess.run(["git", "config", "user.name", "Screener Bot"], check=True)
+    subprocess.run(["git", "add", "settings.json"], check=True)
+    diff = subprocess.run(["git", "diff", "--cached", "--quiet"])
+    if diff.returncode != 0:
+        subprocess.run(["git", "commit", "-m", "bot: advance rotation cursor"], check=True)
+        subprocess.run(["git", "push", "-u", "origin", "HEAD"], check=True)
+
 
 BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 CHAT_ID   = os.environ["TELEGRAM_CHAT_ID"]
@@ -253,18 +266,27 @@ def main():
             unique_rows.append(r)
 
     total        = len(unique_rows)
-    rows         = unique_rows[:MAX_CHARTS]
-    tickers      = [get_real_ticker(r) for r in rows]
+
+    # Rotating window: continue from the ticker after wherever yesterday's
+    # batch ended, wrapping around the (alphabetically sorted) full list
+    # instead of always re-showing the same first MAX_CHARTS tickers.
+    all_tickers  = sorted(get_real_ticker(r) for r in unique_rows)
+    rows_map_all = {get_real_ticker(r): r for r in unique_rows}
+
+    last_ticker  = SETTINGS.get("last_ticker", "")
+    start        = (all_tickers.index(last_ticker) + 1) if last_ticker in all_tickers else 0
+    rotated      = all_tickers[start:] + all_tickers[:start]
+    tickers      = rotated[:MAX_CHARTS]
 
     print(f"✅ נמצאו {total_raw} שורות גולמיות → {total} ייחודיות | מציג {len(tickers)}")
     if tickers:
-        print(f"   דוגמה: {tickers[:5]}")
+        print(f"   מתחיל אחרי: {last_ticker or '(אין, ריצה ראשונה)'} | דוגמה: {tickers[:5]}")
 
     if not tickers:
         send_message(f"📊 <b>Stock Screener — {today}</b>\n\nלא נמצאו מניות לפי הפילטרים.")
         return
 
-    rows_map = {get_real_ticker(r): r for r in rows}
+    rows_map = {t: rows_map_all[t] for t in tickers}
 
     # 2. Render charts
     style = make_style()
@@ -282,7 +304,8 @@ def main():
     # 3. Send header message (separately — caption limit is 1024 chars)
     send_message(
         f"📊 <b>Stock Screener — {today}</b>\n"
-        f"✅ {total} מניות | מוצגות {len(charts)} | 🔵SMA50 🟠SMA200"
+        f"✅ {total} מניות | מוצגות {len(charts)} | 🔵SMA50 🟠SMA200\n"
+        f"🔄 סבב: {tickers[0]} → {tickers[-1]}"
     )
 
     # 4. Send grid pages with linked captions
@@ -292,6 +315,12 @@ def main():
         grid_bytes = build_grid(page)
         caption    = build_caption(page, rows_map, idx, len(pages))
         send_photo(grid_bytes, caption)
+
+    # 5. Advance the rotation cursor so tomorrow continues where today stopped
+    SETTINGS["last_ticker"] = tickers[-1]
+    with open("settings.json", "w") as f:
+        json.dump(SETTINGS, f, ensure_ascii=False, indent=2)
+    commit_and_push()
 
     print("✅ הושלם!")
 
