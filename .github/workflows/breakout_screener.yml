@@ -24,7 +24,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install finviz yfinance mplfinance requests pandas matplotlib scipy
+          pip install yfinance mplfinance requests pandas matplotlib scipy
 
       - name: Run breakout screener and send to Telegram
         env:

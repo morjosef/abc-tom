@@ -14,7 +14,7 @@ import mplfinance as mpf
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from finviz.screener import Screener
+import finviz_client
 from datetime import date
 
 # ========== Config ==========
@@ -313,14 +313,20 @@ def main():
     print(f"📅 {today} — מריץ Breakout Screener...")
 
     # 1. Finviz universe
-    screener = Screener(filters=UNIVERSE_FILTERS, table="Technical", order="ticker")
-    all_rows = list(screener)
+    try:
+        all_rows = finviz_client.screen(UNIVERSE_FILTERS, order="ticker")
+    except finviz_client.FinvizBlocked as exc:
+        send_message(
+            f"🚀 <b>Breakout Screener — {today}</b>\n\n"
+            f"⚠️ Finviz חסם את הבקשה. זו לא תוצאה ריקה — לא קיבלנו נתונים בכלל."
+        )
+        raise SystemExit(f"Finviz blocked the request: {exc}")
 
-    # Deduplicate — finviz sometimes returns the same ticker on multiple pages
+    # Deduplicate — the same ticker can appear on more than one page
     seen: set[str] = set()
     unique_rows: list = []
     for r in all_rows:
-        t = r["Ticker"]
+        t = r.get("Ticker")
         if t and t not in seen:
             seen.add(t)
             unique_rows.append(r)

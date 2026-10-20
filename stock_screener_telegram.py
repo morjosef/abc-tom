@@ -14,7 +14,7 @@ import mplfinance as mpf
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from finviz.screener import Screener
+import finviz_client
 from datetime import date
 
 # ========== טעינת הגדרות ==========
@@ -218,9 +218,10 @@ def build_caption(page: list[tuple[str, bytes]], rows_map: dict,
     for ticker, _ in page:
         url = f"https://www.tradingview.com/chart/?symbol={ticker}"
         row = rows_map.get(ticker, {})
-        # finviz 2.0.0 column shift: "Change" holds actual price, "Price" holds actual RSI
-        price = row.get("Change") or row.get("Price") or "—"
-        rsi   = row.get("Price") or row.get("RSI") or "—"
+        raw_price = row.get("Price")
+        raw_rsi   = row.get("RSI")
+        price = f"{raw_price:.2f}" if isinstance(raw_price, (int, float)) else "—"
+        rsi   = f"RSI {raw_rsi:.0f}" if isinstance(raw_rsi, (int, float)) else "—"
         link  = f'<a href="{url}">{ticker}</a> ${price} {rsi}'
 
         candidate = page_line + " · ".join(links + [link])
@@ -237,30 +238,23 @@ def main():
     today = date.today().strftime("%d/%m/%Y")
     print(f"📅 {today} — מריץ סקרינר...")
 
-    # 1. Finviz screener (table=Technical for RSI + price data)
-    screener     = Screener(filters=FILTERS, table="Technical", order="ticker")
+    # 1. Finviz screener
+    try:
+        all_rows = finviz_client.screen(FILTERS, order="ticker")
+    except finviz_client.FinvizBlocked as exc:
+        send_message(
+            f"📊 <b>Stock Screener — {today}</b>\n\n"
+            f"⚠️ Finviz חסם את הבקשה. זו לא תוצאה ריקה — לא קיבלנו נתונים בכלל."
+        )
+        raise SystemExit(f"Finviz blocked the request: {exc}")
 
-    all_rows     = list(screener)
-    total_raw    = len(all_rows)
+    total_raw = len(all_rows)
 
-    # finviz 2.0.0 column-alignment bug: the HTML section-header letter (A, B, C…)
-    # occupies the "Ticker" cell, shifting real data one column to the right.
-    # Real ticker is in r["Beta"], real RSI in r["Price"], real price in r["Change"].
-    def get_real_ticker(r) -> str:
-        candidate = r.get("Beta", "")
-        # Heuristic: if Beta looks like a ticker (1-5 uppercase letters) and
-        # Ticker looks like a single section letter, use Beta. Otherwise fall back.
-        ticker_field = r.get("Ticker", "")
-        if (len(ticker_field) == 1 and ticker_field.isupper() and
-                candidate and len(candidate) <= 6 and candidate.isupper()):
-            return candidate
-        return ticker_field or candidate
-
-    # Deduplicate by real ticker
+    # Deduplicate — the same ticker can appear on more than one page
     seen: set[str] = set()
     unique_rows: list = []
     for r in all_rows:
-        t = get_real_ticker(r)
+        t = r.get("Ticker")
         if t and t not in seen:
             seen.add(t)
             unique_rows.append(r)
@@ -270,8 +264,8 @@ def main():
     # Rotating window: continue from the ticker after wherever yesterday's
     # batch ended, wrapping around the (alphabetically sorted) full list
     # instead of always re-showing the same first MAX_CHARTS tickers.
-    all_tickers  = sorted(get_real_ticker(r) for r in unique_rows)
-    rows_map_all = {get_real_ticker(r): r for r in unique_rows}
+    all_tickers  = sorted(r["Ticker"] for r in unique_rows)
+    rows_map_all = {r["Ticker"]: r for r in unique_rows}
 
     last_ticker  = SETTINGS.get("last_ticker", "")
     start        = (all_tickers.index(last_ticker) + 1) if last_ticker in all_tickers else 0
