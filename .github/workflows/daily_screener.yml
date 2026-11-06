@@ -29,7 +29,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install yfinance mplfinance requests pandas matplotlib
+          pip install yfinance mplfinance requests pandas matplotlib six
 
       - name: Run screener and send to Telegram
         env:
